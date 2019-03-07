@@ -1,183 +1,163 @@
-
-///cap sensor setup
 #include <Wire.h>
 #include "Adafruit_MPR121.h"
-
-Adafruit_MPR121 cap = Adafruit_MPR121();
-
-// Keeps track of the last pins touched
-// so we know when buttons are 'released'
-uint16_t lasttouched = 0;
-uint16_t currtouched = 0;
-
-int pinTopLeft = 5;
-int pinTopRight = 2;
-int pinBottomLeft = 11;
-int pinBottomRight = 0;
-
-//gesture checking
-int gestureArray[10] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
-int gestureCounter = 0;
-bool timerState = 0;
-long timer = 0;
-int TIMER_THRESHOLD = 700;
-
-//samples
-int topLeftToRight[2] = {pinTopLeft, pinTopRight};
-int bottomLeftToRight[2] = {pinBottomLeft, pinBottomRight};
-
-
-//OLED setup
-// You can use any (4 or) 5 pins
-#define sclk 13
-#define mosi 11
-#define cs   10
-#define rst  9
-#define dc   8
-
-
-// Color definitions
-#define  BLACK           0x0000
-#define BLUE            0x001F
-#define RED             0xF800
-#define GREEN           0x07E0
-#define CYAN            0x07FF
-#define MAGENTA         0xF81F
-#define YELLOW          0xFFE0
-#define WHITE           0xFFFF
-
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1331.h>
 #include <SPI.h>
 
-// Option 1: use any pins but a little slower
-Adafruit_SSD1331 display = Adafruit_SSD1331(cs, dc, mosi, sclk, rst);
+#include "colors.h"
 
-float p = 3.1415926;
+// OLED screen: https://www.adafruit.com/product/684
+const int SCREEN_WIDTH = 96;
+const int SCREEN_HEIGHT = 64;
 
+// Time within which a touch must be completed
+const int TOUCH_RESET_TIME = 3000;
+
+// OLED display
+const int PIN_OLED_SCLK = 13;
+const int PIN_OLED_MOSI = 11;
+const int PIN_OLED_CS = 10;
+const int PIN_OLED_RESET = 9;
+const int PIN_OLED_DC = 8;
+
+// MPR121 cap sense pins that correspond to each conductive knit panel
+const int PIN_TOP_LEFT = 5;
+const int PIN_TOP_RIGHT = 2;
+const int PIN_BOTTOM_LEFT = 11;
+const int PIN_BOTTOM_RIGHT = 0;
+
+Adafruit_SSD1331 display = Adafruit_SSD1331(PIN_OLED_CS, PIN_OLED_DC, PIN_OLED_MOSI, PIN_OLED_SCLK, PIN_OLED_RESET);
+Adafruit_MPR121 cap = Adafruit_MPR121();
+
+typedef struct Touch {
+  int x;
+  int y;
+} Touch;
+
+int gestureStage = 0;
+Touch gesture[2];
 
 void setup() {
-  Serial.begin(9600);
-  //display.begin();
-  //  display.fillScreen(BLACK);
-  //
-  //  display.setCursor(0, 0);
-  //  display.print("Begin");
-  //  delay(50);
+  Serial.begin(115200);
 
   if (!cap.begin(0x5A)) {
     Serial.println("MPR121 not found, check wiring?");
-    display.print("MPR121 not found, check wiring?");
+    // TODO display error symbol & message on display
     while (1);
   }
 
-  Serial.println("MPR121 found!");
-  //display.print("MPR121 found!");
+  Serial.println("Demo setup, starting...");
+}
 
+// Returns true if there is a single touch, and false otherwise
+// If there is a touch then the touch struct passed in is filled with its info
+bool getTouch(Touch& theTouch) {
+  uint16_t capState = cap.touched();
+
+  bool topLeftTouched = (1 << PIN_TOP_LEFT) & capState > 0;
+  bool topRightTouched = (1 << PIN_TOP_RIGHT) & capState > 0;
+  bool bottomLeftTouched = (1 << PIN_BOTTOM_LEFT) & capState > 0;
+  bool bottomRightTouched = (1 << PIN_BOTTOM_RIGHT) & capState > 0;
+
+  int touchCount = 0;
+
+  touchCount += topLeftTouched ? 1 : 0;
+  touchCount += topRightTouched ? 1 : 0;
+  touchCount += bottomLeftTouched ? 1 : 0;
+  touchCount += bottomRightTouched ? 1 : 0;
+
+  if (touchCount == 0) {
+    // No touch
+    return false;
+  } else if (touchCount == 1) {
+    if (topLeftTouched) {
+      theTouch.x = -1;
+      theTouch.y = -1;
+    } else if (topRightTouched) {
+      theTouch.x = 1;
+      theTouch.y = -1;
+    } else if (bottomLeftTouched) {
+      theTouch.x = -1;
+      theTouch.y = 1;
+    } else if (bottomRightTouched) {
+      theTouch.x = 1;
+      theTouch.y = 1;
+    }
+
+    return true;
+  } else {
+    return false;
+  }
+}
+
+void drawArrow(int x1, int y1, int x2, int y2) {
+  // TODO draw arrow from (x1, y1) to (x2, y2)
+}
+
+void handleGesture(Touch first, Touch second) {
+  int tileSize = (SCREEN_HEIGHT - 4) / 4;
+  int gridSize = tileSize * 2;
+
+  int gridLeft = SCREEN_WIDTH / 2 - gridSize / 2;
+  int gridTop = SCREEN_HEIGHT / 2 - gridSize / 2;
+  int gridRight = gridLeft + gridSize;
+  int gridBottom = gridTop + gridSize;
+
+  display.fillScreen(BLACK);
+
+  // Draw the grid outline
+  display.drawLine(gridLeft, gridTop, gridRight, gridTop, WHITE); // top
+  display.drawLine(gridRight, gridTop, gridRight, gridBottom, WHITE); // right
+  display.drawLine(gridRight, gridBottom, gridLeft, gridBottom, WHITE); // bottom
+  display.drawLine(gridLeft, gridBottom, gridLeft, gridTop, WHITE); // left
+
+  // Draw grid lines
+  display.drawLine(gridLeft + tileSize, gridTop, gridLeft + tileSize, gridBottom, WHITE); // vertical
+  display.drawLine(gridLeft, gridTop + tileSize, gridRight, gridTop + tileSize, WHITE); // horizontal
+
+  // Draw gesture
+  int gridCenterX = gridLeft + tileSize;
+  int gridCenterY = gridTop + tileSize;
+
+  int arrowStartX = gridCenterX + first.x * tileSize / 2;
+  int arrowStartY = gridCenterY + first.y * tileSize / 2;
+  int arrowEndX = gridCenterX + second.x * tileSize / 2;
+  int arrowEndY = gridCenterY + second.y * tileSize / 2;
+
+  drawArrow(arrowStartX, arrowStartY, arrowEndX, arrowEndY);
 }
 
 void loop() {
-  checkGuesture();
-}
+  static Touch firstTouch;
+  static bool gestureStarted = false;
+  static long gestureStartedTime;
 
-void checkGuesture() {
-  // Get the currently touched pads
-  currtouched = cap.touched();
+  // Sense touches
+  Touch touch;
+  bool isTouched = getTouch(touch);
 
-  for (uint8_t i = 0; i < 12; i++) {
-    // it if *is* touched and *wasnt* touched before, alert!
-    if ((currtouched & _BV(i)) && !(lasttouched & _BV(i)) ) {
-      //Serial.print(i); Serial.println(" touched");
-      String t = i + " touched";
-      timerState = 0;
-      timer = 0;
-    }
-
-    // if it *was* touched and now *isnt*, alert!
-    if (!(currtouched & _BV(i)) && (lasttouched & _BV(i)) ) {
-      //Serial.print(i); Serial.println(" released");
-      String t = i + " released";
-
-      //if it's not the first pad touched
-      if (gestureArray > 0) {
-        if (gestureArray[gestureCounter - 1] != i) {
-          gestureArray[gestureCounter] = i;
-          gestureCounter ++;
-        }
-      } else {
-        gestureArray[gestureCounter] = i;
-        gestureCounter ++;
-      }
-
-      timerState = 1;
-    }
-  }
-
-  if (timerState) {
-    timer ++;
-  }
-
-  if (timer > TIMER_THRESHOLD && gestureCounter > 0) {
-
-    //compare the gesture 
-    if (compareArray(gestureArray, topLeftToRight, gestureCounter)) {
-      Serial.println("top left to right");
-    }else if (compareArray(gestureArray, bottomLeftToRight, gestureCounter)) {
-      Serial.println("bottom left to right");
-    }
-
-
-    //reset the gesture array
-    for (int i = 0; i < gestureCounter; i ++) {
-      gestureArray[i] = -1;
-    }
-    gestureCounter = 0;
-    timer = 0;
-  }
-  // reset our state
-  lasttouched = currtouched;
-
-  // comment out this line for detailed data from the sensor!
-  return;
-
-  // debugging info, what
-  Serial.print("\t\t\t\t\t\t\t\t\t\t\t\t\t 0x"); Serial.println(cap.touched(), HEX);
-  Serial.print("Filt: ");
-  for (uint8_t i = 0; i < 12; i++) {
-    Serial.print(cap.filteredData(i)); Serial.print("\t");
-  }
-  Serial.println();
-  Serial.print("Base: ");
-  for (uint8_t i = 0; i < 12; i++) {
-    Serial.print(cap.baselineData(i)); Serial.print("\t");
-  }
-  Serial.println();
-
-  // put a delay so it isn't overwhelming
-  //delay(100);
-}
-
-bool compareArray(int a[], int b[], int n) {
-  if(sizeof(b) != n){
-    return false;
-  }
-  for (int i = 0; i < n; i ++) {
-    if (a[i] ==  b[i]) {
-      //match
+  // Manage gesture state
+  if (isTouched && !gestureStarted) {
+    if (!gestureStarted) {
+      // Start the gesture
+      gestureStarted = true;
+      gestureStartedTime = millis();
+      firstTouch = touch;
     } else {
-      //not matching
-      return false;
+      if (firstTouch.x == touch.x && firstTouch.y == touch.y) {
+        // Still touching the same panel, ignore
+      } else {
+        // Gesture completed!
+        handleGesture(firstTouch, touch);
+      }
     }
   }
-  return true;
+
+  // If enough time passes without the gesture being completed then consider it
+  // incomplete and reset
+  if (gestureStarted && (millis() - gestureStartedTime > TOUCH_RESET_TIME)) {
+    gestureStarted = false;
+  }
+
+  delay(10);
 }
-
-void displayText(String input) {
-  //display.fillScreen(BLACK);
-  //display.setCursor(0, 0);
-  //display.fillRect(0,0,display.width(),display.height(), BLACK);
-  display.println(input);
-  //delay(50);
-}
-
-
